@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+CTA.tsx
+Features.tsx
+HeroPoster.tsx
+TemplateSection.tsx
+PosterTypes.tsx
+Footer.tsx
+Hero.tsx
+
