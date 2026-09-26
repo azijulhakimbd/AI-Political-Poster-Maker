@@ -1,9 +1,10 @@
 
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { toJpeg, toPng } from "html-to-image";
 import jsPDF from "jspdf";
 
@@ -31,6 +32,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { API_URL } from "@/lib/api-url";
+import type { PosterResponse } from "@/lib/poster-schema";
 
 import {
   Card,
@@ -40,6 +43,12 @@ import {
 } from "@/components/ui/card";
 
 interface PosterData {
+  posterId?: string;
+  templateId?: string;
+  headline?: string;
+  ai?: PosterResponse;
+  photos?: Array<{ url: string; publicId: string }>;
+  background?: string;
   name: string;
   designation: string;
   organization: string;
@@ -53,19 +62,18 @@ interface PosterData {
 
 type ExportFormat = "png" | "jpg";
 
-const POSTER_WIDTH = 1080;
-const POSTER_HEIGHT = 1350;
-
 const defaultPosterData: PosterData = {
   name: "আপনার নাম",
   designation: "সভাপতি, স্থানীয় কমিটি",
   organization: "",
   occasion: "শুভেচ্ছা",
+  headline: "",
   date: "",
   location: "",
   message: "আপনাকে আন্তরিক শুভেচ্ছা ও অভিনন্দন",
   style: "classic",
   photo: null,
+  photos: [],
 };
 
 const backgrounds = [
@@ -93,9 +101,23 @@ const backgrounds = [
     className:
       "bg-gradient-to-br from-neutral-950 via-neutral-800 to-neutral-600",
   },
+  {
+    id: "gold",
+    name: "Gold",
+    className:
+      "bg-gradient-to-br from-amber-950 via-amber-700 to-yellow-400",
+  },
+  {
+    id: "minimal",
+    name: "Minimal",
+    className:
+      "bg-gradient-to-br from-zinc-900 via-zinc-700 to-stone-500",
+  },
 ];
 
 function getBackgroundFromStyle(style: string) {
+  if (backgrounds.some((item) => item.id === style)) return style;
+
   switch (style) {
     case "modern":
       return "blue";
@@ -133,7 +155,52 @@ function sanitizeFileName(value: string) {
   );
 }
 
+function subscribeToPosterData(onChange: () => void) {
+  if (typeof window === "undefined") return () => undefined;
+  window.addEventListener("poster-data-updated", onChange);
+  return () => window.removeEventListener("poster-data-updated", onChange);
+}
+
+function getPosterDataSnapshot() {
+  return window.sessionStorage.getItem("poster-data") || "";
+}
+
+function getServerPosterDataSnapshot() {
+  return "";
+}
+
+function parsePosterData(value: string): PosterData | null {
+  if (!value) return null;
+
+  try {
+    return JSON.parse(value) as PosterData;
+  } catch (error) {
+    console.error("Failed to load poster data:", error);
+    return null;
+  }
+}
+
 export default function EditorPage() {
+  const serializedPosterData = useSyncExternalStore(
+    subscribeToPosterData,
+    getPosterDataSnapshot,
+    getServerPosterDataSnapshot
+  );
+
+  return (
+    <EditorWorkspace
+      key={serializedPosterData}
+      initialPosterData={parsePosterData(serializedPosterData)}
+    />
+  );
+}
+
+function EditorWorkspace({
+  initialPosterData,
+}: {
+  initialPosterData: PosterData | null;
+}) {
+  const { data: session } = useSession();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /**
@@ -146,27 +213,24 @@ export default function EditorPage() {
    */
   const posterRef = useRef<HTMLDivElement>(null);
 
-  const initialPosterData = useMemo<PosterData | null>(() => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-
-    const savedData = window.sessionStorage.getItem("poster-data");
-
-    if (!savedData) {
-      return null;
-    }
-
-    try {
-      return JSON.parse(savedData) as PosterData;
-    } catch (error) {
-      console.error("Failed to load poster data:", error);
-      return null;
-    }
-  }, []);
-
   const [name, setName] = useState(
     initialPosterData?.name || defaultPosterData.name
+  );
+
+  const [posterId, setPosterId] = useState(
+    initialPosterData?.posterId || ""
+  );
+
+  const [templateId] = useState(
+    initialPosterData?.templateId || ""
+  );
+
+  const [headline, setHeadline] = useState(
+    initialPosterData?.headline || initialPosterData?.ai?.headline || ""
+  );
+
+  const [aiContent, setAiContent] = useState<PosterResponse | null>(
+    initialPosterData?.ai || null
   );
 
   const [designation, setDesignation] = useState(
@@ -192,17 +256,23 @@ export default function EditorPage() {
   );
 
   const [message, setMessage] = useState(
-    initialPosterData?.message || defaultPosterData.message
+    initialPosterData?.ai?.message ||
+      initialPosterData?.message ||
+      defaultPosterData.message
   );
 
   const [background, setBackground] = useState(
-    getBackgroundFromStyle(
-      initialPosterData?.style || defaultPosterData.style
-    )
+    initialPosterData?.ai?.theme ||
+      initialPosterData?.background ||
+      getBackgroundFromStyle(initialPosterData?.style || defaultPosterData.style)
   );
 
   const [photo, setPhoto] = useState<string | null>(
-    initialPosterData?.photo || null
+    initialPosterData?.photos?.[0]?.url || initialPosterData?.photo || null
+  );
+
+  const [photoAssets, setPhotoAssets] = useState(
+    initialPosterData?.photos || []
   );
 
   const [zoom, setZoom] = useState(100);
@@ -212,6 +282,23 @@ export default function EditorPage() {
   const [saved, setSaved] = useState(false);
 
   const [exporting, setExporting] = useState(false);
+  const [isImproving, setIsImproving] = useState(false);
+
+  const posterPhotoUrls = photoAssets.length
+    ? photoAssets.map((asset) => asset.url)
+    : photo
+      ? [photo]
+      : [];
+
+  const posterDimensions = aiContent?.layout === "square"
+    ? { width: 1600, height: 1600, aspectClass: "aspect-square" }
+    : aiContent?.layout === "landscape"
+      ? { width: 1600, height: 1200, aspectClass: "aspect-4/3" }
+      : { width: 1200, height: 1600, aspectClass: "aspect-3/4" };
+
+  const headlineFontClass = aiContent?.headlineStyle === "elegant" || aiContent?.headlineStyle === "traditional"
+    ? "font-serif"
+    : "font-sans";
 
   const selectedBackground =
     backgrounds.find((item) => item.id === background) ??
@@ -220,7 +307,7 @@ export default function EditorPage() {
   /**
    * Convert uploaded image to Data URL.
    */
-  const handlePhoto = (
+  const handlePhoto = async (
     event: React.ChangeEvent<HTMLInputElement>
   ) => {
     const file = event.target.files?.[0];
@@ -249,21 +336,33 @@ export default function EditorPage() {
       return;
     }
 
-    const reader = new FileReader();
+    if (!session?.accessToken) {
+      alert("Please sign in again before uploading a photo.");
+      return;
+    }
 
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        setPhoto(reader.result);
+    try {
+      const uploadBody = new FormData();
+      uploadBody.append("photos", file);
+      const response = await fetch(`${API_URL}/api/upload`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.accessToken}` },
+        body: uploadBody,
+      });
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "Unable to upload this image.");
       }
-    };
 
-    reader.onerror = () => {
-      alert("Unable to read the selected image.");
-    };
-
-    reader.readAsDataURL(file);
-
-    event.target.value = "";
+      const asset = result.data[0];
+      setPhotoAssets((current) => [...current.slice(0, 2), asset]);
+      setPhoto(asset.url);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to upload this image.");
+    } finally {
+      event.target.value = "";
+    }
   };
 
   /**
@@ -271,6 +370,7 @@ export default function EditorPage() {
    */
   const removePhoto = () => {
     setPhoto(null);
+    setPhotoAssets([]);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -296,6 +396,8 @@ export default function EditorPage() {
     setLocation("");
 
     setMessage(defaultPosterData.message);
+    setHeadline("");
+    setAiContent(null);
 
     setBackground("green");
 
@@ -315,34 +417,147 @@ export default function EditorPage() {
   /**
    * Save current editor state.
    */
-  const savePoster = () => {
-    const posterData: PosterData = {
+  const savePoster = async (overrides: Partial<PosterData> = {}) => {
+    if (!session?.accessToken) {
+      alert("Please sign in again before saving this poster.");
+      return false;
+    }
+
+    const values: PosterData = {
       name,
       designation,
       organization,
+      headline,
       occasion,
       date,
       location,
       message,
-      style:
-        background === "blue"
-          ? "modern"
-          : background === "dark"
-            ? "premium"
-            : "classic",
+      style: background,
+      background,
       photo,
+      photos: photoAssets,
+      ai: aiContent || undefined,
+      posterId,
+      templateId,
+      ...overrides,
     };
 
-    sessionStorage.setItem(
-      "poster-data",
-      JSON.stringify(posterData)
-    );
+    const savedAI = values.ai
+      ? {
+          ...values.ai,
+          headline: values.headline || values.ai.headline,
+          message: values.message,
+          name: values.name,
+          designation: values.designation,
+          organization: values.organization,
+          date: values.date,
+          location: values.location,
+          theme: backgrounds.some((item) => item.id === values.background)
+            ? values.background as PosterResponse["theme"]
+            : values.ai.theme,
+          footer: `প্রচারে: ${values.name}${values.designation ? `, ${values.designation}` : ""}${values.organization ? `, ${values.organization}` : ""}`,
+        }
+      : null;
+
+    try {
+      const response = await fetch(
+        values.posterId
+          ? `${API_URL}/api/posters/${encodeURIComponent(values.posterId)}`
+          : `${API_URL}/api/posters`,
+        {
+          method: values.posterId ? "PATCH" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.accessToken}`,
+          },
+          body: JSON.stringify({
+            formData: {
+              name: values.name,
+              designation: values.designation,
+              organization: values.organization,
+              occasion: values.occasion,
+              headline: values.headline,
+              date: values.date,
+              location: values.location,
+              message: values.message,
+              style: values.style,
+              background: values.background,
+            },
+            aiContent: savedAI,
+            uploadedPhotoUrls: values.photos || [],
+            templateId: values.templateId,
+          }),
+        }
+      );
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "Unable to save this poster.");
+      }
+
+      values.posterId = result.data._id;
+      values.ai = savedAI || undefined;
+      setPosterId(result.data._id);
+      sessionStorage.setItem("poster-data", JSON.stringify(values));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to save this poster.");
+      return false;
+    }
 
     setSaved(true);
 
     window.setTimeout(() => {
       setSaved(false);
     }, 2000);
+    return true;
+  };
+
+  const improveWithAI = async () => {
+    if (isImproving) return;
+    setIsImproving(true);
+
+    try {
+      const response = await fetch("/api/ai/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          posterId: posterId || undefined,
+          name,
+          designation,
+          organization,
+          occasion,
+          headline,
+          date,
+          location,
+          message,
+          style: "classic",
+          templateName: "Saved poster",
+          language: "bn",
+        }),
+      });
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Unable to regenerate poster copy.");
+      }
+
+      const generated = result.data as PosterResponse;
+      setAiContent(generated);
+      setHeadline(generated.headline);
+      setMessage(generated.message);
+      setBackground(generated.theme);
+      await savePoster({
+        ai: generated,
+        headline: generated.headline,
+        message: generated.message,
+        background: generated.theme,
+        style: generated.theme,
+      });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to regenerate poster copy.");
+    } finally {
+      setIsImproving(false);
+    }
   };
 
   /**
@@ -403,7 +618,7 @@ export default function EditorPage() {
    *
    * The exported poster is always rendered at:
    *
-   * 1080 × 1350
+  * The selected AI layout's print dimensions.
    */
   const generatePosterImage = async (
     format: ExportFormat | "pdf"
@@ -420,7 +635,7 @@ export default function EditorPage() {
       cacheBust: true,
 
       /**
-       * PDF needs an exact 1080 × 1350 raster image.
+      * PDF uses the selected layout's exact raster dimensions.
        *
        * PNG/JPG use 2x resolution for better quality.
        */
@@ -428,13 +643,13 @@ export default function EditorPage() {
 
       backgroundColor: "#ffffff",
 
-      width: POSTER_WIDTH,
+      width: posterDimensions.width,
 
-      height: POSTER_HEIGHT,
+      height: posterDimensions.height,
 
       style: {
-        width: `${POSTER_WIDTH}px`,
-        height: `${POSTER_HEIGHT}px`,
+        width: `${posterDimensions.width}px`,
+        height: `${posterDimensions.height}px`,
         transform: "none",
         transformOrigin: "top left",
         margin: "0",
@@ -476,8 +691,8 @@ export default function EditorPage() {
 
     try {
       console.log("Exporting poster:", {
-        width: POSTER_WIDTH,
-        height: POSTER_HEIGHT,
+        width: posterDimensions.width,
+        height: posterDimensions.height,
         format,
         hasPhoto: Boolean(photo),
       });
@@ -539,13 +754,13 @@ export default function EditorPage() {
    *
    * Poster image:
    *
-   * 1080 × 1350
+  * 1200 × 1600 or larger, based on the selected layout.
    *
    * PDF page:
    *
-   * 1080 × 1350
+  * Matches the selected poster dimensions.
    *
-   * This keeps the exact 4:5 composition.
+  * This keeps the exact poster composition.
    */
   const handlePdfExport = async () => {
     if (!posterRef.current || exporting) {
@@ -556,8 +771,8 @@ export default function EditorPage() {
 
     try {
       console.log("Generating PDF:", {
-        width: POSTER_WIDTH,
-        height: POSTER_HEIGHT,
+        width: posterDimensions.width,
+        height: posterDimensions.height,
       });
 
       const dataUrl =
@@ -573,17 +788,17 @@ export default function EditorPage() {
       }
 
       /**
-       * Create a custom 1080 × 1350 PDF page.
+      * Create a custom page matching the selected poster layout.
        *
        * Using px here keeps the PDF page dimensions
        * aligned with the poster canvas dimensions.
        */
       const pdf = new jsPDF({
-        orientation: "portrait",
+        orientation: posterDimensions.width > posterDimensions.height ? "landscape" : "portrait",
         unit: "px",
         format: [
-          POSTER_WIDTH,
-          POSTER_HEIGHT,
+          posterDimensions.width,
+          posterDimensions.height,
         ],
         compress: true,
       });
@@ -596,8 +811,8 @@ export default function EditorPage() {
         "JPEG",
         0,
         0,
-        POSTER_WIDTH,
-        POSTER_HEIGHT,
+        posterDimensions.width,
+        posterDimensions.height,
         undefined,
         "FAST"
       );
@@ -606,7 +821,7 @@ export default function EditorPage() {
         sanitizeFileName(name || "ai-poster");
 
       pdf.save(
-        `${fileName}-poster-1080x1350.pdf`
+        `${fileName}-poster-${posterDimensions.width}x${posterDimensions.height}.pdf`
       );
 
       console.log(
@@ -695,7 +910,7 @@ export default function EditorPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={savePoster}
+              onClick={() => void savePoster()}
             >
               <Save className="mr-2 h-4 w-4" />
 
@@ -924,7 +1139,7 @@ export default function EditorPage() {
                     </span>
 
                     <span className="font-medium">
-                      1080 × 1350
+                      {posterDimensions.width} × {posterDimensions.height}
                     </span>
                   </div>
                 </div>
@@ -998,13 +1213,13 @@ export default function EditorPage() {
             {/* =================================
                 ACTUAL EXPORTABLE POSTER
 
-                Design ratio = 4:5
-                Export ratio = 1080 × 1350
+                Design ratio = 3:4
+                Export ratio = 1200 × 1600
             ================================== */}
 
             <div
               ref={posterRef}
-              className={`relative aspect-[4/5] w-[min(72vw,560px)] overflow-hidden rounded-sm bg-white shadow-2xl ${selectedBackground.className}`}
+              className={`relative ${posterDimensions.aspectClass} w-[min(72vw,560px)] overflow-hidden rounded-sm bg-white shadow-2xl ${selectedBackground.className}`}
             >
               {/* Background */}
 
@@ -1025,7 +1240,7 @@ export default function EditorPage() {
               {/* Header */}
 
               <div className="relative z-10 px-[8%] pt-[7%] text-center text-white">
-                <p className="text-[clamp(10px,1.2vw,16px)] font-medium uppercase tracking-[0.2em] opacity-90">
+                <p className="text-[clamp(14px,2vw,24px)] font-bold opacity-95">
                   {occasion ||
                     "শুভেচ্ছা ও অভিনন্দন"}
                 </p>
@@ -1036,30 +1251,53 @@ export default function EditorPage() {
               {/* Photo */}
 
               <div className="absolute left-1/2 top-[18%] z-10 -translate-x-1/2">
-                <div className="relative h-[30%] w-[30%] min-h-[110px] min-w-[110px] overflow-hidden rounded-full border-[6px] border-white/90 bg-white/20 shadow-2xl">
-                  {photo ? (
-                    <Image
-                      src={photo}
-                      alt={name}
-                      width={500}
-                      height={500}
-                      className="h-full w-full object-cover"
-                      unoptimized
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-white/15">
-                      <ImagePlus className="h-10 w-10 text-white/70" />
-                    </div>
-                  )}
-                </div>
+                {posterPhotoUrls.length ? (
+                  <div className="flex items-center justify-center gap-2">
+                    {posterPhotoUrls.slice(0, 3).map((photoUrl) => (
+                      <div
+                        key={photoUrl}
+                        className={`relative aspect-square overflow-hidden rounded-full border-[5px] border-white/90 bg-white/20 shadow-2xl ${
+                          posterPhotoUrls.length === 1 ? "h-36 w-36" : "h-24 w-24"
+                        }`}
+                      >
+                        <Image
+                          src={photoUrl}
+                          alt={name}
+                          fill
+                          className="object-cover"
+                          unoptimized
+                        />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex h-36 w-36 items-center justify-center rounded-full border-[6px] border-white/90 bg-white/15 shadow-2xl">
+                    <ImagePlus className="h-10 w-10 text-white/70" />
+                  </div>
+                )}
               </div>
 
               {/* Main Text */}
 
-              <div className="absolute inset-x-[7%] top-[52%] z-10 text-center text-white">
-                <h1 className="break-words text-[clamp(22px,4vw,48px)] font-black leading-tight drop-shadow-lg">
+              <div
+                className="absolute inset-x-[7%] top-[48%] z-10 text-center text-white"
+                style={{ textAlign: aiContent?.textAlignment || "center" }}
+              >
+                {(headline || aiContent?.headline) && (
+                  <p className={`mb-3 wrap-break-word text-[clamp(20px,3.2vw,38px)] ${headlineFontClass} font-bold leading-tight drop-shadow-lg`}>
+                    {headline || aiContent?.headline}
+                  </p>
+                )}
+
+                <h1 className="wrap-break-word text-[clamp(22px,4vw,48px)] font-black leading-tight drop-shadow-lg">
                   {name}
                 </h1>
+
+                {aiContent?.subheadline && (
+                  <p className="mt-2 text-[clamp(10px,1.5vw,18px)] font-medium opacity-95">
+                    {aiContent.subheadline}
+                  </p>
+                )}
 
                 {designation && (
                   <p className="mt-2 text-[clamp(10px,1.5vw,18px)] font-medium opacity-95">
@@ -1075,9 +1313,15 @@ export default function EditorPage() {
 
                 <div className="mx-auto my-5 h-px w-24 bg-white/60" />
 
-                <p className="break-words text-[clamp(11px,1.5vw,18px)] font-semibold leading-relaxed">
+                <p className="wrap-break-word text-[clamp(11px,1.5vw,18px)] font-semibold leading-relaxed">
                   {message}
                 </p>
+
+                {aiContent?.suggestedSlogan && (
+                  <p className="mt-3 text-[clamp(9px,1.2vw,14px)] font-medium opacity-90">
+                    {aiContent.suggestedSlogan}
+                  </p>
+                )}
               </div>
 
               {/* Date / Location */}
@@ -1110,7 +1354,7 @@ export default function EditorPage() {
 
               <div className="absolute inset-x-0 bottom-0 z-10 bg-black/25 px-[8%] py-[3.5%] text-center text-white backdrop-blur-sm">
                 <p className="text-[clamp(8px,1vw,13px)] font-medium">
-                  আপনার ভালোবাসা ও সহযোগিতাই আমাদের অনুপ্রেরণা
+                  {aiContent?.footer || `প্রচারে: ${name}${designation ? `, ${designation}` : ""}${organization ? `, ${organization}` : ""}`}
                 </p>
 
                 <p className="mt-1 text-[clamp(7px,0.8vw,11px)] opacity-80">
@@ -1196,6 +1440,16 @@ export default function EditorPage() {
             </div>
 
             <div className="space-y-5">
+              <div className="space-y-2">
+                <Label htmlFor="editor-headline">Poster Headline</Label>
+                <Input
+                  id="editor-headline"
+                  value={headline}
+                  onChange={(event) => setHeadline(event.target.value)}
+                  placeholder="Poster headline"
+                />
+              </div>
+
               {/* Name */}
 
               <div className="space-y-2">
@@ -1345,14 +1599,11 @@ export default function EditorPage() {
                   <Button
                     className="mt-4 w-full"
                     variant="outline"
-                    onClick={() =>
-                      alert(
-                        "AI design assistance will be connected in the next step."
-                      )
-                    }
+                    onClick={improveWithAI}
+                    disabled={isImproving}
                   >
                     <Sparkles className="mr-2 h-4 w-4" />
-                    AI Improve Design
+                    {isImproving ? "Regenerating..." : "Regenerate with AI"}
                   </Button>
                 </CardContent>
               </Card>
@@ -1366,7 +1617,7 @@ export default function EditorPage() {
                   </Label>
 
                   <span className="text-xs text-muted-foreground">
-                    1080 × 1350
+                    1200 × 1600
                   </span>
                 </div>
 
@@ -1411,7 +1662,7 @@ export default function EditorPage() {
               <Button
                 variant="outline"
                 className="w-full"
-                onClick={savePoster}
+                onClick={() => void savePoster()}
               >
                 <Save className="mr-2 h-4 w-4" />
 

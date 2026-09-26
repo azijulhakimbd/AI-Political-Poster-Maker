@@ -1,4 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Political Poster Maker
+
+An MVP for creating Bangla political and community posters. Gemini generates structured copy and layout guidance; the browser renders exact text and uploaded photos into a print-resolution poster. MongoDB stores per-user poster history, and Cloudinary stores uploaded photos.
+
+## MVP Setup
+
+Requirements: Node.js 20+, MongoDB, a Gemini API key, and a Cloudinary account.
+
+Copy `.env.example` to `.env`, then set MongoDB, JWT, NextAuth, Gemini, and Cloudinary values. Use different random secrets for `JWT_SECRET` and `NEXTAUTH_SECRET`. Keep `.env` private.
+
+Run the backend and seed templates:
+
+```bash
+npm install
+npm run seed:templates
+npm run server:dev
+```
+
+In another terminal, start Next.js:
+
+```bash
+npm run dev
+```
+
+Open `http://localhost:3000`. The Express server must be running for registration, image uploads, templates, and poster history.
+
+`NEXT_PUBLIC_API_URL` defaults to `http://localhost:5000`; `CLIENT_URL` defaults to `http://localhost:3000`.
+
+## API Surface
+
+- Auth: `POST /api/auth/register`, `POST /api/auth/login`
+- Templates: `GET /api/templates`, `GET /api/templates/:id`
+- Uploads: authenticated `POST /api/upload`, up to three PNG/JPG/WEBP files, 5 MB each
+- Posters: authenticated create/list/get/update/delete endpoints under `/api/posters`
+- Regeneration: `POST /api/posters/:id/regenerate`, three retries per saved poster
+- AI: authenticated `POST /api/ai/generate`, limited to 10 requests per user per 10 minutes per server process
+
+The starter template set is read-only and seeded with `npm run seed:templates`. Saved poster inputs can be reopened and exported again from history. PNG/JPG and PDF exports are rendered in the browser at 1200×1600.
+
+For deployment, host Next.js and Express separately, set the environment variables on each service, allow the frontend origin in `CLIENT_URL`, and use MongoDB Atlas plus Cloudinary. The Gemini request limit is process-local; multi-instance deployments should use a shared rate-limit store.
+
+## Next.js Starter References
 
 ## Getting Started
 

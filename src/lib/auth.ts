@@ -1,6 +1,7 @@
 import Credentials from "next-auth/providers/credentials";
 import type { NextAuthOptions, Session, User } from "next-auth";
 import type { JWT } from "next-auth/jwt";
+import { API_URL } from "@/lib/api-url";
 
 type AuthUser = {
   id: string;
@@ -17,9 +18,6 @@ type AuthToken = JWT & {
   avatar?: string;
   accessToken?: string;
 };
-
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
 
 export const authConfig: NextAuthOptions = {
   session: {

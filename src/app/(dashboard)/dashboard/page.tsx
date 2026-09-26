@@ -1,67 +1,60 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import {
   ArrowUpRight,
   Clock3,
-  Download,
   FileImage,
+  Loader2,
   Plus,
   Sparkles,
-  TrendingUp,
 } from "lucide-react";
+import { API_URL } from "@/lib/api-url";
 
-const stats = [
-  {
-    title: "Total Posters",
-    value: "24",
-    change: "+12%",
-    icon: FileImage,
-  },
-  {
-    title: "AI Generations",
-    value: "68",
-    change: "+18%",
-    icon: Sparkles,
-  },
-  {
-    title: "Downloads",
-    value: "142",
-    change: "+24%",
-    icon: Download,
-  },
-  {
-    title: "This Month",
-    value: "16",
-    change: "+8%",
-    icon: TrendingUp,
-  },
-];
-
-const recentPosters = [
-  {
-    id: "1",
-    title: "Victory Day Celebration",
-    type: "Victory Day",
-    date: "Today",
-  },
-  {
-    id: "2",
-    title: "Community Meeting",
-    type: "Campaign",
-    date: "Yesterday",
-  },
-  {
-    id: "3",
-    title: "Tribute Poster",
-    type: "Tribute",
-    date: "2 days ago",
-  },
-];
+type DashboardPoster = {
+  _id: string;
+  title: string;
+  formData: { occasion?: string; name?: string };
+  generationCount: number;
+  updatedAt: string;
+};
 
 export default function DashboardPage() {
+  const { data: session, status } = useSession();
+  const [posters, setPosters] = useState<DashboardPoster[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (status === "loading") return;
+    if (!session?.accessToken || !session.user.id) return;
+
+    const controller = new AbortController();
+    fetch(`${API_URL}/api/posters/user/${encodeURIComponent(session.user.id)}`, {
+      headers: { Authorization: `Bearer ${session.accessToken}` },
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then((response) => response.json())
+      .then((result) => {
+        if (result.success && Array.isArray(result.data)) setPosters(result.data);
+      })
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+
+    return () => controller.abort();
+  }, [session?.accessToken, session?.user.id, status]);
+
+  const stats = [
+    { title: "Total Posters", value: String(posters.length), change: "Saved designs", icon: FileImage },
+    { title: "AI Generations", value: String(posters.reduce((total, poster) => total + (poster.generationCount || 1), 0)), change: "Initial + retries", icon: Sparkles },
+  ];
+
   return (
     <div className="space-y-8">
       {/* Welcome */}
-      <section className="relative overflow-hidden rounded-3xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-teal-50 p-6 sm:p-8 dark:border-emerald-500/10 dark:from-emerald-500/10 dark:via-zinc-900 dark:to-teal-500/10">
+      <section className="relative overflow-hidden rounded-3xl border border-emerald-100 bg-linear-to-br from-emerald-50 via-white to-teal-50 p-6 sm:p-8 dark:border-emerald-500/10 dark:from-emerald-500/10 dark:via-zinc-900 dark:to-teal-500/10">
         <div className="relative z-10 max-w-2xl">
           <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white/70 px-3 py-1.5 text-xs font-medium text-emerald-700 backdrop-blur dark:border-emerald-500/20 dark:bg-zinc-900/60 dark:text-emerald-400">
             <Sparkles className="h-3.5 w-3.5" />
@@ -100,7 +93,7 @@ export default function DashboardPage() {
       </section>
 
       {/* Stats */}
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2">
         {stats.map((stat) => {
           const Icon = stat.icon;
 
@@ -154,13 +147,15 @@ export default function DashboardPage() {
           </div>
 
           <div className="divide-y divide-zinc-100 dark:divide-zinc-800">
-            {recentPosters.map((poster) => (
+            {loading ? (
+              <div className="flex justify-center p-8 text-zinc-500"><Loader2 className="h-4 w-4 animate-spin" /></div>
+            ) : posters.length ? posters.slice(0, 3).map((poster) => (
               <Link
-                href={`/posters/${poster.id}`}
-                key={poster.id}
+                href="/posters"
+                key={poster._id}
                 className="flex items-center gap-4 p-5 transition hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
               >
-                <div className="flex h-14 w-12 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-100 to-teal-100 text-emerald-700 dark:from-emerald-500/10 dark:to-teal-500/10 dark:text-emerald-400">
+                <div className="flex h-14 w-12 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-emerald-100 to-teal-100 text-emerald-700 dark:from-emerald-500/10 dark:to-teal-500/10 dark:text-emerald-400">
                   <FileImage className="h-5 w-5" />
                 </div>
 
@@ -170,18 +165,20 @@ export default function DashboardPage() {
                   </h3>
 
                   <p className="mt-1 text-xs text-zinc-500">
-                    {poster.type}
+                    {poster.formData?.occasion} · {poster.formData?.name}
                   </p>
                 </div>
 
                 <div className="hidden items-center gap-1 text-xs text-zinc-400 sm:flex">
                   <Clock3 className="h-3.5 w-3.5" />
-                  {poster.date}
+                  {new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(new Date(poster.updatedAt))}
                 </div>
 
                 <ArrowUpRight className="h-4 w-4 text-zinc-400" />
               </Link>
-            ))}
+            )) : (
+              <div className="p-6 text-sm text-zinc-500">Your saved posters will appear here.</div>
+            )}
           </div>
         </div>
 

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { signOut, useSession } from "next-auth/react";
 import {
   BarChart3,
   Clock3,
@@ -66,6 +67,13 @@ export function DashboardSidebar({
   onClose,
 }: DashboardSidebarProps) {
   const pathname = usePathname();
+  const { data: session } = useSession();
+  const displayName = session?.user?.name || session?.user?.email || "Creator account";
+  const initials = displayName
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("");
 
   const isActive = (href: string) => {
     const cleanHref = href.split("?")[0];
@@ -105,7 +113,7 @@ export function DashboardSidebar({
             onClick={onClose}
             className="group flex items-center gap-3"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500 via-green-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-br from-emerald-500 via-green-500 to-teal-500 text-white shadow-lg shadow-emerald-500/20">
               <Sparkles className="h-5 w-5" />
             </div>
 
@@ -152,7 +160,7 @@ export function DashboardSidebar({
                 >
                   <Icon
                     className={[
-                      "h-[18px] w-[18px]",
+                      "h-4.5 w-4.5",
                       active
                         ? "text-emerald-600 dark:text-emerald-400"
                         : "text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200",
@@ -184,7 +192,7 @@ export function DashboardSidebar({
                   onClick={onClose}
                   className="group flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-zinc-600 transition-all hover:bg-zinc-100 hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-white"
                 >
-                  <Icon className="h-[18px] w-[18px] text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200" />
+                  <Icon className="h-4.5 w-4.5 text-zinc-400 group-hover:text-zinc-700 dark:group-hover:text-zinc-200" />
                   <span>{item.title}</span>
                 </Link>
               );
@@ -192,7 +200,7 @@ export function DashboardSidebar({
           </nav>
 
           {/* AI card */}
-          <div className="mt-8 overflow-hidden rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 via-white to-teal-50 p-4 dark:border-emerald-500/10 dark:from-emerald-500/10 dark:via-zinc-950 dark:to-teal-500/10">
+          <div className="mt-8 overflow-hidden rounded-2xl border border-emerald-100 bg-linear-to-br from-emerald-50 via-white to-teal-50 p-4 dark:border-emerald-500/10 dark:from-emerald-500/10 dark:via-zinc-950 dark:to-teal-500/10">
             <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500 text-white">
               <Sparkles className="h-4 w-4" />
             </div>
@@ -218,21 +226,23 @@ export function DashboardSidebar({
         {/* User section */}
         <div className="border-t border-zinc-200/80 p-4 dark:border-zinc-800/80">
           <div className="flex items-center gap-3 rounded-xl p-2">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 text-sm font-bold text-white">
-              AH
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-emerald-500 to-teal-600 text-sm font-bold text-white">
+              {initials || "U"}
             </div>
 
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-zinc-900 dark:text-white">
-                Azijul Hakim
+                {displayName}
               </p>
               <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
-                Creator account
+                {session?.user?.email || "Creator account"}
               </p>
             </div>
 
             <button
               title="Logout"
+              aria-label="Sign out"
+              onClick={() => signOut({ callbackUrl: "/login" })}
               className="rounded-lg p-2 text-zinc-400 transition hover:bg-zinc-100 hover:text-red-500 dark:hover:bg-zinc-900"
             >
               <LogOut className="h-4 w-4" />
